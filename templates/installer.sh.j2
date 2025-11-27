@@ -1,0 +1,324 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Guardian Installer (rendered from templates/installer.sh.j2)
+# This script applies system hardening, installs platform dependencies,
+# configures services, and deploys the home stack.
+
+APP_NAME="{{ app.name | default('guardian') }}"
+APP_VERSION="{{ app.version | default('0.1.0') }}"
+TIMEZONE="{{ installer.timezone | default('UTC') }}"
+LOCALE="{{ installer.locale | default('en_US.UTF-8') }}"
+HOSTNAME_CFG="{{ installer.hostname | default('guardian') }}"
+CREATE_SUDO_USER={{ 'true' if installer.create_sudo_user else 'false' }}
+SUDO_USER="{{ installer.user.name | default('guardian') }}"
+SUDO_SHELL="{{ installer.user.shell | default('/bin/bash') }}"
+AUTHORIZED_KEYS=(
+{% for key in installer.user.authorized_keys %}  "{{ key }}"
+{% endfor %})
+SSH_PORT="{{ installer.ssh.port | default(22) }}"
+PERMIT_ROOT_LOGIN={{ 'true' if installer.ssh.permit_root_login else 'false' }}
+PASSWORD_AUTH={{ 'true' if installer.ssh.password_authentication else 'false' }}
+FIREWALL_ENABLED={{ 'true' if installer.firewall.enabled else 'false' }}
+FIREWALL_DEFAULT="{{ installer.firewall.default_policy | default('deny') }}"
+HOMEPAGE_ENABLED={{ 'true' if homepage.enabled else 'false' }}
+HOMEPAGE_CONFIG_DIR="{{ homepage.config_dir | default('/etc/guardian/homepage') }}"
+ENABLE_KVM={{ 'true' if virtualization.enable_kvm else 'false' }}
+ISOLATED_NET_NAME="{{ virtualization.networks.isolated.name | default('guardian-isolated') }}"
+ISOLATED_NET_BRIDGE="{{ virtualization.networks.isolated.bridge | default('virbr1') }}"
+KALI_ENABLED={{ 'true' if virtualization.vms.kali.enabled else 'false' }}
+KALI_RAM_MB="{{ virtualization.vms.kali.memory_mb | default(4096) }}"
+KALI_VCPUS="{{ virtualization.vms.kali.vcpus | default(2) }}"
+PFSENSE_ENABLED={{ 'true' if virtualization.vms.pfsense.enabled else 'false' }}
+PFSENSE_RAM_MB="{{ virtualization.vms.pfsense.memory_mb | default(2048) }}"
+PFSENSE_VCPUS="{{ virtualization.vms.pfsense.vcpus | default(2) }}"
+DOCKER_ENABLED={{ 'true' if docker.enabled else 'false' }}
+DOCKER_DATA_ROOT="{{ docker.data_root | default('/var/lib/docker') }}"
+COMPOSE_TEMPLATE="{{ docker.compose_file | default('templates/docker-compose.yml.j2') }}"
+FAIL2BAN_ENABLED={{ 'true' if monitoring.enable_fail2ban else 'false' }}
+AUDITD_ENABLED={{ 'true' if monitoring.enable_auditd else 'false' }}
+RESTART_ALWAYS_SERVICES=({% for svc in monitoring.systemd_services.restart_always %} "{{ svc }}"{% endfor %})
+
+REQUIRED_PACKAGES=(
+{% for pkg in installer.packages.required %}  "{{ pkg }}"
+{% endfor %})
+OPTIONAL_PACKAGES=(
+{% for pkg in installer.packages.optional %}  "{{ pkg }}"
+{% endfor %})
+HARDENING_PACKAGES=(fail2ban auditd unattended-upgrades ca-certificates software-properties-common gnupg lsb-release ufw openssh-server)
+DOCKER_PACKAGES=(docker.io docker-compose-plugin)
+BACKUP_PACKAGES=(restic cron)
+SECURITY_SCAN_PACKAGES=(clamav rkhunter chkrootkit aide)
+KVM_PACKAGES=(qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst cloud-image-utils)
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ASSET_SSHD="${SCRIPT_DIR}/sshd_config"
+ASSET_SYSCTL="${SCRIPT_DIR}/sysctl.conf"
+ASSET_UFW="${SCRIPT_DIR}/ufw-rules.v4"
+ASSET_COMPOSE="${SCRIPT_DIR}/docker-compose.yml"
+ASSET_KVM_NET="${SCRIPT_DIR}/kvm/isolated-net.xml"
+ASSET_KALI="${SCRIPT_DIR}/kvm/create-kali-vm.sh"
+ASSET_PFSENSE="${SCRIPT_DIR}/kvm/create-pfsense-vm.sh"
+ASSET_BACKUP="${SCRIPT_DIR}/backups/backup.sh"
+ASSET_SECURITY_SCAN="${SCRIPT_DIR}/backups/security-scan.sh"
+HOME_STACK_ROOT="/srv/home-stack"
+LOG_DIR="/var/log/guardian"
+
+log() {
+  echo "[$(date -Is)] $*" | tee -a "${LOG_DIR}/installer.log"
+}
+
+require_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "This installer must be run as root." >&2
+    exit 1
+  fi
+}
+
+run_cmd() {
+  log "RUN: $*"
+  eval "$@"
+}
+
+ensure_packages() {
+  local packages=("$@")
+  if [[ ${#packages[@]} -eq 0 ]]; then
+    return
+  fi
+  run_cmd "apt-get update"
+  run_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y ${packages[*]}"
+}
+
+configure_locale_timezone_hostname() {
+  log "Configuring locale (${LOCALE}), timezone (${TIMEZONE}), and hostname (${HOSTNAME_CFG})"
+  run_cmd "timedatectl set-timezone ${TIMEZONE}"
+  run_cmd "locale-gen ${LOCALE}"
+  run_cmd "update-locale LANG=${LOCALE}"
+  echo "${HOSTNAME_CFG}" > /etc/hostname
+  hostnamectl set-hostname "${HOSTNAME_CFG}"
+}
+
+create_sudo_user() {
+  if [[ "${CREATE_SUDO_USER}" != "true" ]]; then
+    log "Skipping sudo user creation (disabled in configuration)"
+    return
+  fi
+
+  if id "${SUDO_USER}" >/dev/null 2>&1; then
+    log "User ${SUDO_USER} already exists"
+  else
+    log "Creating sudo user ${SUDO_USER}"
+    run_cmd "useradd -m -s ${SUDO_SHELL} -G sudo ${SUDO_USER}"
+    run_cmd "passwd -l ${SUDO_USER}"
+  fi
+
+  local ssh_dir="/home/${SUDO_USER}/.ssh"
+  mkdir -p "${ssh_dir}"
+  chmod 700 "${ssh_dir}"
+  if [[ ${#AUTHORIZED_KEYS[@]} -gt 0 ]]; then
+    printf '%s\n' "${AUTHORIZED_KEYS[@]}" > "${ssh_dir}/authorized_keys"
+    chmod 600 "${ssh_dir}/authorized_keys"
+    chown -R "${SUDO_USER}:${SUDO_USER}" "${ssh_dir}"
+  fi
+}
+
+apply_sshd_hardening() {
+  if [[ ! -f "${ASSET_SSHD}" ]]; then
+    log "sshd_config asset missing at ${ASSET_SSHD}"
+    return
+  fi
+  log "Applying hardened SSH configuration"
+  install -b -m 600 "${ASSET_SSHD}" /etc/ssh/sshd_config
+  if [[ "${PASSWORD_AUTH}" != "true" ]]; then
+    run_cmd "passwd -l root"
+  fi
+  run_cmd "systemctl restart ssh"
+}
+
+apply_sysctl_hardening() {
+  if [[ ! -f "${ASSET_SYSCTL}" ]]; then
+    log "sysctl asset missing at ${ASSET_SYSCTL}"
+    return
+  fi
+  log "Applying sysctl hardening"
+  install -m 644 "${ASSET_SYSCTL}" /etc/sysctl.d/99-guardian.conf
+  run_cmd "sysctl -p /etc/sysctl.d/99-guardian.conf"
+}
+
+apply_ufw_rules() {
+  if [[ "${FIREWALL_ENABLED}" != "true" ]]; then
+    log "Firewall disabled in configuration; skipping UFW"
+    return
+  fi
+  if [[ ! -f "${ASSET_UFW}" ]]; then
+    log "UFW rules asset missing at ${ASSET_UFW}"
+    return
+  fi
+
+  log "Configuring UFW with default policy ${FIREWALL_DEFAULT}"
+  ufw --force reset
+  install -m 600 "${ASSET_UFW}" /etc/ufw/user.rules
+  ufw default "${FIREWALL_DEFAULT}" incoming
+  ufw default allow outgoing
+  ufw allow "${SSH_PORT}"/tcp
+  ufw --force enable
+}
+
+configure_docker() {
+  if [[ "${DOCKER_ENABLED}" != "true" ]]; then
+    log "Docker disabled in configuration; skipping engine install"
+    return
+  fi
+  log "Installing Docker engine and configuring data root (${DOCKER_DATA_ROOT})"
+  ensure_packages "${DOCKER_PACKAGES[@]}"
+  mkdir -p "${DOCKER_DATA_ROOT}"
+  cat >/etc/docker/daemon.json <<EOF_DOCKER
+{
+  "data-root": "${DOCKER_DATA_ROOT}",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "50m",
+    "max-file": "3"
+  },
+  "storage-driver": "overlay2"
+}
+EOF_DOCKER
+  run_cmd "systemctl enable --now docker"
+}
+
+deploy_home_stack() {
+  if [[ "${DOCKER_ENABLED}" != "true" ]]; then
+    log "Home stack requires Docker; skipping deployment"
+    return
+  fi
+  if [[ ! -f "${ASSET_COMPOSE}" ]]; then
+    log "docker-compose.yml asset missing at ${ASSET_COMPOSE}"
+    return
+  fi
+
+  log "Preparing home stack directory structure"
+  mkdir -p "${HOME_STACK_ROOT}/homepage/config" "${HOME_STACK_ROOT}/logs"
+
+  if [[ "${HOMEPAGE_ENABLED}" == "true" ]]; then
+    if [[ -d "${SCRIPT_DIR}/homepage" ]]; then
+      log "Syncing homepage configuration into ${HOME_STACK_ROOT}/homepage/config"
+      rsync -a "${SCRIPT_DIR}/homepage/" "${HOME_STACK_ROOT}/homepage/config/"
+    fi
+  fi
+
+  log "Deploying docker compose stack"
+  cp "${ASSET_COMPOSE}" "${HOME_STACK_ROOT}/docker-compose.yml"
+  (cd "${HOME_STACK_ROOT}" && run_cmd "docker compose pull")
+  (cd "${HOME_STACK_ROOT}" && run_cmd "docker compose up -d")
+}
+
+configure_monitoring() {
+  if [[ "${FAIL2BAN_ENABLED}" == "true" ]]; then
+    ensure_packages fail2ban
+    run_cmd "systemctl enable --now fail2ban"
+  fi
+  if [[ "${AUDITD_ENABLED}" == "true" ]]; then
+    ensure_packages auditd
+    run_cmd "systemctl enable --now auditd"
+  fi
+  for svc in "${RESTART_ALWAYS_SERVICES[@]}"; do
+    if systemctl list-unit-files | grep -q "^${svc}.service"; then
+      log "Enabling systemd service ${svc}"
+      systemctl enable "${svc}"
+      systemctl restart "${svc}"
+    fi
+  done
+}
+
+configure_backups() {
+  ensure_packages "${BACKUP_PACKAGES[@]}" "${SECURITY_SCAN_PACKAGES[@]}"
+  if [[ -f "${ASSET_BACKUP}" ]]; then
+    install -m 700 "${ASSET_BACKUP}" /usr/local/bin/guardian-backup.sh
+  fi
+  if [[ -f "${ASSET_SECURITY_SCAN}" ]]; then
+    install -m 700 "${ASSET_SECURITY_SCAN}" /usr/local/bin/guardian-security-scan.sh
+  fi
+
+  log "Configuring cron jobs for backups and security scans"
+  cat >/etc/cron.d/guardian-backups <<EOF_CRON
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+0 3 * * * root /usr/local/bin/guardian-backup.sh >/var/log/guardian/backup.log 2>&1
+0 2 * * 0 root /usr/local/bin/guardian-security-scan.sh >/var/log/guardian/security-scan.log 2>&1
+EOF_CRON
+}
+
+configure_kvm() {
+  if [[ "${ENABLE_KVM}" != "true" ]]; then
+    log "KVM/libvirt disabled; skipping virtualization setup"
+    return
+  fi
+  log "Installing KVM/libvirt tooling"
+  ensure_packages "${KVM_PACKAGES[@]}"
+  run_cmd "systemctl enable --now libvirtd"
+
+  if [[ -f "${ASSET_KVM_NET}" ]]; then
+    log "Defining isolated network ${ISOLATED_NET_NAME} (${ISOLATED_NET_BRIDGE})"
+    virsh net-define "${ASSET_KVM_NET}" || true
+    virsh net-autostart "${ISOLATED_NET_NAME}" || true
+    virsh net-start "${ISOLATED_NET_NAME}" || true
+  fi
+
+  if [[ -f "${ASSET_KALI}" ]]; then
+    install -m 755 "${ASSET_KALI}" /usr/local/bin/create-kali-vm.sh
+    sed -i "s/^DEFAULT_RAM_MB=.*/DEFAULT_RAM_MB=${KALI_RAM_MB}/" /usr/local/bin/create-kali-vm.sh || true
+    sed -i "s/^DEFAULT_VCPUS=.*/DEFAULT_VCPUS=${KALI_VCPUS}/" /usr/local/bin/create-kali-vm.sh || true
+  fi
+  if [[ -f "${ASSET_PFSENSE}" ]]; then
+    install -m 755 "${ASSET_PFSENSE}" /usr/local/bin/create-pfsense-vm.sh
+    sed -i "s/^DEFAULT_RAM_MB=.*/DEFAULT_RAM_MB=${PFSENSE_RAM_MB}/" /usr/local/bin/create-pfsense-vm.sh || true
+    sed -i "s/^DEFAULT_VCPUS=.*/DEFAULT_VCPUS=${PFSENSE_VCPUS}/" /usr/local/bin/create-pfsense-vm.sh || true
+  fi
+}
+
+apply_updates_and_upgrades() {
+  log "Updating package index and upgrading base system"
+  run_cmd "apt-get update"
+  run_cmd "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y"
+}
+
+print_summary() {
+  cat <<EOF_SUMMARY
+----------------------------------------
+Guardian Installer Completed
+----------------------------------------
+App:        ${APP_NAME} (${APP_VERSION})
+Hostname:   ${HOSTNAME_CFG}
+Timezone:   ${TIMEZONE}
+Locale:     ${LOCALE}
+SSH Port:   ${SSH_PORT}
+Firewall:   ${FIREWALL_ENABLED} (policy: ${FIREWALL_DEFAULT})
+Docker:     ${DOCKER_ENABLED}
+KVM:        ${ENABLE_KVM} (network: ${ISOLATED_NET_NAME}/${ISOLATED_NET_BRIDGE})
+Homepage:   ${HOMEPAGE_ENABLED}
+Backups:    /usr/local/bin/guardian-backup.sh (cron 03:00)
+Security:   /usr/local/bin/guardian-security-scan.sh (cron Sun 02:00)
+Artifacts:  ${SCRIPT_DIR}
+----------------------------------------
+EOF_SUMMARY
+}
+
+main() {
+  require_root
+  mkdir -p "${LOG_DIR}"
+  apply_updates_and_upgrades
+  ensure_packages "${REQUIRED_PACKAGES[@]}" "${OPTIONAL_PACKAGES[@]}" "${HARDENING_PACKAGES[@]}"
+  configure_locale_timezone_hostname
+  create_sudo_user
+  apply_sysctl_hardening
+  apply_sshd_hardening
+  apply_ufw_rules
+  configure_docker
+  deploy_home_stack
+  configure_monitoring
+  configure_backups
+  configure_kvm
+  print_summary
+}
+
+main "$@"
