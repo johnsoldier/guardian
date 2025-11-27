@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOG_DIR="/var/log/security-scans"
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="${LOG_DIR}/security-scan-${TIMESTAMP}.log"
+TARGETS=(
+  "/srv/home-stack"
+  "/etc"
+  "/var/lib/docker"
+)
+
+mkdir -p "${LOG_DIR}"
+
+echo "[+] Security scan started at ${TIMESTAMP}" | tee -a "${LOG_FILE}"
+
+echo "[+] Running ClamAV scan" | tee -a "${LOG_FILE}"
+clamscan -r --infected "${TARGETS[@]}" | tee -a "${LOG_FILE}"
+
+echo "[+] Updating rkhunter properties" | tee -a "${LOG_FILE}"
+rkhunter --propupd | tee -a "${LOG_FILE}"
+
+echo "[+] Running chkrootkit" | tee -a "${LOG_FILE}"
+chkrootkit | tee -a "${LOG_FILE}"
+
+echo "[+] Running AIDE check" | tee -a "${LOG_FILE}"
+aide --check | tee -a "${LOG_FILE}"
+
+echo "[+] Security scan completed at $(date +%Y%m%d-%H%M%S)" | tee -a "${LOG_FILE}"

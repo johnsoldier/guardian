@@ -1,0 +1,75 @@
+app:
+  name: guardian
+  version: 0.1.0
+
+logging:
+  level: INFO
+  log_file: /var/log/guardian/installer.log
+
+installer:
+  timezone: UTC
+  locale: en_US.UTF-8
+  hostname: guardian
+  create_sudo_user: true
+  user:
+    name: guardian
+    shell: /bin/bash
+    authorized_keys: []
+  packages:
+    required:
+      - curl
+      - git
+      - python3
+      - python3-venv
+      - ufw
+      - openssh-server
+    optional:
+      - docker.io
+      - docker-compose-plugin
+  ssh:
+    port: 22
+    permit_root_login: false
+    password_authentication: false
+  firewall:
+    enabled: true
+    default_policy: deny
+    allow:
+      - 22
+      - 80
+      - 443
+
+homepage:
+  enabled: true
+  config_dir: /etc/guardian/homepage
+  widgets: templates/homepage/widgets.yaml.j2
+  services: templates/homepage/services.yaml.j2
+  config: templates/homepage/config.yaml.j2
+
+virtualization:
+  enable_kvm: false
+  networks:
+    isolated:
+      name: guardian-isolated
+      bridge: virbr1
+  vms:
+    kali:
+      enabled: false
+      memory_mb: 4096
+      vcpus: 2
+    pfsense:
+      enabled: false
+      memory_mb: 2048
+      vcpus: 2
+
+docker:
+  enabled: true
+  compose_file: templates/docker-compose.yml.j2
+  data_root: /var/lib/docker
+
+monitoring:
+  enable_fail2ban: true
+  enable_auditd: true
+  systemd_services:
+    restart_always:
+      - ssh
+      - ufw
