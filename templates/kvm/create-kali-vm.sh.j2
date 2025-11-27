@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VM_NAME="${1:-kali-lab}"
+KALI_ISO="${KALI_ISO:-{{ kali_iso_path | default('/var/lib/libvirt/boot/kali.iso') }}}"
+DISK_PATH="${KALI_DISK_PATH:-{{ kali_disk_path }}}"
+DISK_SIZE="${KALI_DISK_SIZE:-{{ kali_disk_size | default('40G') }}}"
+RAM_MB="${KALI_RAM_MB:-{{ kali_memory_mb | default(4096) }}}"
+VCPUS="${KALI_VCPUS:-{{ kali_vcpus | default(4) }}}"
+NETWORK_NAME="${KALI_NETWORK:-cyberlab}"
+BRIDGE_NAME="${KALI_BRIDGE:-virbr50}"
+
+if [[ -z "$DISK_PATH" ]]; then
+  echo "KALI_DISK_PATH is required." >&2
+  exit 1
+fi
+
+if [[ ! -f "$KALI_ISO" ]]; then
+  echo "Kali ISO not found at $KALI_ISO" >&2
+  exit 1
+fi
+
+if ! virsh net-info "$NETWORK_NAME" >/dev/null 2>&1; then
+  echo "Libvirt network '$NETWORK_NAME' is not defined; define it before continuing." >&2
+  exit 1
+fi
+
+if ! virsh net-info "$NETWORK_NAME" | grep -q "Bridge: ${BRIDGE_NAME}"; then
+  echo "Network $NETWORK_NAME is not bound to bridge $BRIDGE_NAME." >&2
+  exit 1
+fi
+
+if [[ ! -f "$DISK_PATH" ]]; then
+  mkdir -p "$(dirname "$DISK_PATH")"
+  echo "Creating qcow2 disk at $DISK_PATH ($DISK_SIZE)"
+  qemu-img create -f qcow2 "$DISK_PATH" "$DISK_SIZE"
+fi
+
+virt-install \
+  --name "$VM_NAME" \
+  --description "Kali Linux lab VM" \
+  --ram "$RAM_MB" \
+  --vcpus "$VCPUS" \
+  --cpu host-passthrough \
+  --os-variant debian12 \
+  --cdrom "$KALI_ISO" \
+  --disk "path=$DISK_PATH,format=qcow2,bus=virtio" \
+  --network network="$NETWORK_NAME",model=virtio \
+  --graphics spice \
+  --sound ich9 \
+  --video virtio \
+  --rng /dev/urandom \
+  --noautoconsole \
+  --check all=off
