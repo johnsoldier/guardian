@@ -1,0 +1,21 @@
+{% set app_name = app.name | default('guardian') %}
+{% set host = homepage_host | default(app_name) %}
+---
+widgets:
+  - netdata:
+      url: "http://{{ host }}:{{ netdata_port }}"
+      hostname: "{{ homepage_netdata_hostname | default(host) }}"
+      theme: "{{ homepage_netdata_theme | default('slate') }}"
+  - pihole:
+      url: "http://{{ pihole_ip | default(host) }}"
+      apiKey: "{{ pihole_api_key }}"
+  - docker:
+      host: "{{ homepage_docker_host | default('unix:///var/run/docker.sock') }}"
+      label: "{{ homepage_docker_label | default('home-stack') }}"
+      showStopped: {{ homepage_docker_show_stopped | default(false) }}
+  - network:
+      interface: "{{ homepage_network_interface | default('eth0') }}"
+      bandwidth:
+        up: {{ homepage_network_up_mbps | default(1000) }}
+        down: {{ homepage_network_down_mbps | default(1000) }}
+      chart: {{ homepage_network_show_chart | default(true) }}

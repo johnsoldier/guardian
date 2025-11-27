@@ -1,0 +1,36 @@
+{% set app_name = app.name | default('guardian') %}
+{% set host = homepage_host | default(app_name) %}
+---
+services:
+  - Pi-hole:
+      - Dashboard:
+          href: "http://{{ pihole_ip | default(host) }}:{{ pihole_web_port }}"
+          description: "Network ad blocking and DNS sinkhole"
+          icon: "mdi:dns"
+  - Plex:
+      - Media Server:
+          href: "http://{{ host }}:{{ plex_port }}"
+          description: "Stream and manage your media library"
+          icon: "mdi:plex"
+  - Nextcloud:
+      - Files:
+          href: "http://{{ host }}:{{ nextcloud_http_port }}"
+          description: "Self-hosted storage, calendar, and collaboration"
+          icon: "mdi:cloud-outline"
+  - WireGuard:
+      - VPN Gateway:
+          href: "http://{{ host }}:{{ wireguard_port }}"
+          description: "Secure remote access via WireGuard"
+          icon: "mdi:shield-lock"
+  - Netdata:
+      - Metrics:
+          href: "http://{{ host }}:{{ netdata_port }}"
+          description: "Real-time system monitoring"
+          icon: "mdi:chart-areaspline"
+{% if enable_immich | default(false) %}
+  - Immich:
+      - Photos:
+          href: "http://{{ host }}:{{ immich_port }}"
+          description: "Photo and video management"
+          icon: "mdi:image-multiple"
+{% endif %}
