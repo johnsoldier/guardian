@@ -43,6 +43,23 @@ def build_context(default_config: Path, override_config: Path | None) -> Dict[st
     return context
 
 
+def validate_config(config: Dict[str, Any]) -> None:
+    """Perform lightweight validation to ensure required sections exist."""
+
+    if not config:
+        raise ValueError("Configuration is empty after loading and merging YAML files.")
+
+    required_sections = [
+        "app",
+        "installer",
+        "docker",
+    ]
+
+    missing = [key for key in required_sections if key not in config]
+    if missing:
+        raise ValueError(f"Missing required configuration sections: {', '.join(missing)}")
+
+
 def render_templates(
     template_dir: Path, output_dir: Path, context: Dict[str, Any], force: bool
 ) -> None:
@@ -54,9 +71,14 @@ def render_templates(
     )
 
     templates = env.list_templates(filter_func=lambda name: name.endswith(".j2"))
+    rendered_count = 0
     for template_name in templates:
         template = env.get_template(template_name)
         relative_output = Path(template_name[:-3])
+
+        if relative_output.name == "installer.sh":
+            relative_output = relative_output.with_name("homelab-install.sh")
+
         output_path = output_dir / relative_output
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -68,6 +90,13 @@ def render_templates(
         logging.info("Rendering %s -> %s", template_name, output_path)
         rendered = template.render(**context)
         output_path.write_text(rendered, encoding="utf-8")
+
+        if output_path.suffix == ".sh":
+            output_path.chmod(0o755)
+
+        rendered_count += 1
+
+    logging.info("Rendered %s templates to %s", rendered_count, output_dir)
 
 
 def parse_args() -> argparse.Namespace:
@@ -125,6 +154,7 @@ def main() -> int:
         raise FileNotFoundError(f"Templates directory not found: {args.templates}")
 
     context = build_context(args.config, args.override)
+    validate_config(context)
     render_templates(args.templates, args.output_dir, context, args.force)
 
     logging.info("Build completed. Artifacts available in %s", args.output_dir)
