@@ -1,0 +1,66 @@
+{% set app_name = app.name | default('guardian') %}
+---
+# Homepage configuration
+# Reference: https://gethomepage.dev/
+title: "{{ homepage_instance_name | default(app_name | capitalize ~ ' Home') }}"
+subtitle: "{{ homepage_subtitle | default('Unified services dashboard') }}"
+logo: "{{ homepage_logo | default('') }}"
+language: "{{ homepage_language | default('en') }}"
+base: "{{ homepage_base_url | default('https://' ~ app_name ~ '.local') }}"
+headerStyle: "{{ homepage_header_style | default('clean') }}"
+hideVersion: {{ homepage_hide_version | default(false) }}
+hideErrors: {{ homepage_hide_errors | default(false) }}
+
+# Theme customization
+# Colors expect valid CSS color values (hex/rgb/hsl)
+theme:
+  dark: {{ homepage_theme_dark | default(true) }}
+  background: "{{ homepage_theme_background | default('#0f172a') }}"
+  primary: "{{ homepage_theme_primary | default('#22d3ee') }}"
+  accent: "{{ homepage_theme_accent | default('#a855f7') }}"
+  radius: {{ homepage_theme_radius | default(12) }}
+  highlightGlow: {{ homepage_theme_highlight_glow | default(true) }}
+
+# Layout controls
+layout:
+  header: {{ homepage_show_header | default(true) }}
+  footer: {{ homepage_show_footer | default(true) }}
+  columns: {{ homepage_columns | default(3) }}
+  columnGap: {{ homepage_column_gap | default(24) }}
+  rowGap: {{ homepage_row_gap | default(16) }}
+
+# Optional authentication
+auth:
+  enabled: {{ homepage_enable_auth | default(false) }}
+{% if homepage_enable_auth | default(false) %}
+  users:
+    - username: "{{ homepage_auth_user }}"
+      password_hash: "{{ homepage_auth_password_hash }}"
+  session_timeout_minutes: {{ homepage_session_timeout_minutes | default(1440) }}
+  allow_registration: {{ homepage_allow_registration | default(false) }}
+{% else %}
+  users: []
+{% endif %}
+
+# Footer and links
+footer:
+  show_clock: {{ homepage_footer_show_clock | default(true) }}
+  text: "{{ homepage_footer_text | default(app_name | capitalize ~ ' self-hosted stack') }}"
+  links:
+    - name: "Status"
+      url: "{{ homepage_status_url | default('') }}"
+      icon: "mdi:monitor-dashboard"
+    - name: "Docs"
+      url: "{{ homepage_docs_url | default('') }}"
+      icon: "mdi:file-document"
+
+# Quick service links (used in UI chrome)
+services:
+  pihole: "{{ pihole_external_url | default('http://' ~ pihole_ip ~ ':' ~ pihole_web_port) }}"
+  plex: "{{ plex_external_url | default('http://' ~ app_name ~ ':' ~ plex_port) }}"
+  netdata: "{{ netdata_external_url | default('http://' ~ app_name ~ ':' ~ netdata_port) }}"
+  nextcloud: "{{ nextcloud_external_url | default('http://' ~ app_name ~ ':' ~ nextcloud_http_port) }}"
+  wireguard: "{{ wireguard_external_url | default('http://' ~ app_name ~ ':' ~ wireguard_port) }}"
+{% if enable_immich | default(false) %}
+  immich: "{{ immich_external_url | default('http://' ~ app_name ~ ':' ~ immich_port) }}"
+{% endif %}
