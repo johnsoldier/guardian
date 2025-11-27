@@ -1,0 +1,23 @@
+# Managed by Guardian installer
+# Generated from templates/ufw-rules.v4.j2
+# Adjusted using installer.firewall settings from config/defaults.yaml
+
+*filter
+:INPUT {{ "DROP" if installer.firewall.default_policy|lower == "deny" else "ACCEPT" }} [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+
+# Allow established sessions and local traffic
+-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+
+# Permit configured service ports
+{% for port in installer.firewall.allow | default([]) %}
+-A INPUT -p tcp --dport {{ port }} -j ACCEPT
+-A INPUT -p udp --dport {{ port }} -j ACCEPT
+{% endfor %}
+
+# Final policy
+-A INPUT -j {{ "DROP" if installer.firewall.default_policy|lower == "deny" else "ACCEPT" }}
+
+COMMIT
