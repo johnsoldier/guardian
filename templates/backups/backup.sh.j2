@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export RESTIC_REPOSITORY="{{ restic_repo }}"
+export RESTIC_PASSWORD="{{ restic_password }}"
+
+SOURCES=(
+  "/srv/home-stack"
+  "/etc"
+  "/var/lib/docker"
+)
+
+restic snapshots >/dev/null 2>&1 || restic init
+
+restic backup --tag home-stack --host "$(hostname -s)" "${SOURCES[@]}"

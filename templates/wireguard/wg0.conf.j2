@@ -1,0 +1,11 @@
+[Interface]
+PrivateKey = {{ wg_private_key }}
+Address = {{ wg_vpn_subnet_ip }}
+ListenPort = {{ wg_port }}
+
+{% for item in wg_peers %}
+[Peer]
+PublicKey = {{ item.public_key }}
+AllowedIPs = {{ item.allowed_ips }}
+PersistentKeepalive = 25
+{% endfor %}

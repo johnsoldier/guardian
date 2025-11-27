@@ -1,0 +1,54 @@
+# This file is managed by the Guardian installer. Manual changes may be overwritten.
+# Secure OpenSSH daemon configuration.
+
+Port {{ installer.ssh.port }}
+Protocol 2
+AddressFamily any
+ListenAddress 0.0.0.0
+
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+# Authentication
+PermitRootLogin {{ "yes" if installer.ssh.permit_root_login else "no" }}
+PasswordAuthentication {{ "yes" if installer.ssh.password_authentication else "no" }}
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+AuthenticationMethods publickey{{ ",password" if installer.ssh.password_authentication else "" }}
+KbdInteractiveAuthentication no
+
+# Session security
+UsePAM yes
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+PermitTunnel no
+GatewayPorts no
+AllowStreamLocalForwarding no
+
+ClientAliveInterval 300
+ClientAliveCountMax 2
+LoginGraceTime 30
+MaxAuthTries 3
+MaxSessions 4
+MaxStartups 10:30:60
+
+# Logging
+SyslogFacility AUTHPRIV
+LogLevel VERBOSE
+
+# Crypto policy
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes256-ctr
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
+
+# Banner and environment
+Banner none
+AcceptEnv LANG LC_*
+
+# Host-based access (disabled by default)
+IgnoreUserKnownHosts yes
+HostbasedAuthentication no
+
+# SFTP subsystem
+Subsystem sftp /usr/lib/openssh/sftp-server
