@@ -1,0 +1,25 @@
+version: "3.9"
+
+{% set app_name = app.name | default('guardian') %}
+{% set timezone = installer.timezone | default('UTC') %}
+
+services:
+{% if homepage.enabled %}
+  homepage:
+    image: ghcr.io/benphelps/homepage:latest
+    container_name: {{ app_name }}-homepage
+    restart: unless-stopped
+    environment:
+      - TZ={{ timezone }}
+    volumes:
+      - {{ homepage.config_dir }}:/app/config:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - {{ app_name }}
+{% endif %}
+
+networks:
+  {{ app_name }}:
+    driver: bridge
