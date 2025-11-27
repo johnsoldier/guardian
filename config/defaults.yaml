@@ -38,6 +38,84 @@ installer:
       - 80
       - 443
 
+# Network and security defaults
+trusted_lan: 192.168.1.0/24
+wg_vpn_subnet: 10.8.0.0/24
+wg_vpn_subnet_ip: 10.8.0.1/24
+wg_port: 51820
+wireguard_gateway: 10.8.0.1
+wireguard_subnet: 10.8.0.0/24
+wireguard_allowed_ips: "0.0.0.0/0, ::/0"
+dns_port: 53
+
+# Sysctl hardening defaults
+enable_ipv6: false
+forwarding: 0
+rp_filter_mode: 1
+tcp_max_syn_backlog: 4096
+somaxconn: 1024
+
+# Service endpoints and ports
+pihole_admin_password: change-me
+pihole_ip: 192.168.1.53
+pihole_web_port: 8080
+homepage_port: 3000
+media_library_path: /srv/media
+media_puid: 1000
+media_pgid: 1000
+plex_port: 32400
+plex_dlna_tcp_port: 32469
+plex_dlna_udp_port: 1900
+netdata_port: 19999
+nextcloud_http_port: 8081
+nextcloud_puid: 1000
+nextcloud_pgid: 1000
+nextcloud_db: mariadb
+nextcloud_db_name: nextcloud
+nextcloud_db_user: nextcloud
+nextcloud_db_password: change-me
+nextcloud_db_root_password: change-me
+wireguard_endpoint: vpn.example.com
+wireguard_port: 51820
+wireguard_peers: 5
+dns_ip: 1.1.1.1
+home_subnet: 192.168.1.0/24
+homepage_instance_name: Guardian Home
+homepage_subtitle: Unified services dashboard
+homepage_logo: ""
+
+# Optional Immich defaults
+enable_immich: false
+immich_port: 2283
+immich_db_name: immich
+immich_db_user: immich
+immich_db_password: change-me
+enable_mapbox: false
+mapbox_key: ""
+immich_external_url: "http://guardian:2283"
+
+# External URLs for homepage quick links
+pihole_external_url: "http://guardian:8080"
+plex_external_url: "http://guardian:32400"
+netdata_external_url: "http://guardian:19999"
+nextcloud_external_url: "http://guardian:8081"
+wireguard_external_url: "http://guardian:51820"
+
+# WireGuard server configuration
+wg_private_key: "REPLACE_ME_WITH_BASE64_KEY"
+wg_peers: []
+
+# Backup configuration
+restic_repo: /srv/backups/restic
+restic_password: change-me
+
+# KVM defaults
+kali_disk_path: /var/lib/libvirt/images/kali.qcow2
+kali_disk_size: 40G
+kali_memory_mb: 4096
+kali_vcpus: 4
+kali_iso_path: /var/lib/libvirt/boot/kali.iso
+
 homepage:
   enabled: true
   config_dir: /etc/guardian/homepage

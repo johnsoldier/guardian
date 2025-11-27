@@ -2,13 +2,13 @@
 # Apply with: sysctl -p /etc/sysctl.conf
 
 {% set ipv6_disabled = 0 if enable_ipv6|default(false) else 1 %}
-{% set forwarding = 1 if enable_packet_forwarding|default(false) else 0 %}
-{% set rp_filter_mode = rp_filter|default(1) %}
-{% set somaxconn = net_core_somaxconn|default(4096) %}
-{% set tcp_max_syn_backlog = tcp_syn_backlog|default(4096) %}
+{% set forwarding_flag = 1 if forwarding|default(0) else 0 %}
+{% set rp_filter_mode = rp_filter_mode|default(1) %}
+{% set somaxconn = somaxconn|default(4096) %}
+{% set tcp_max_syn_backlog = tcp_max_syn_backlog|default(4096) %}
 
 # IPv4 network protections
-net.ipv4.ip_forward = {{ forwarding }}
+net.ipv4.ip_forward = {{ forwarding_flag }}
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
 net.ipv4.conf.all.accept_redirects = 0
@@ -55,8 +55,8 @@ net.ipv4.conf.all.arp_announce = 2
 net.ipv4.conf.default.arp_announce = 2
 
 # Packet forwarding controls (IPv6)
-net.ipv6.conf.all.forwarding = {{ forwarding if enable_ipv6|default(false) else 0 }}
-net.ipv6.conf.default.forwarding = {{ forwarding if enable_ipv6|default(false) else 0 }}
+net.ipv6.conf.all.forwarding = {{ forwarding_flag if enable_ipv6|default(false) else 0 }}
+net.ipv6.conf.default.forwarding = {{ forwarding_flag if enable_ipv6|default(false) else 0 }}
 
 # Kernel hardening
 kernel.randomize_va_space = 2
