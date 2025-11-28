@@ -1,0 +1,10 @@
+<network>
+  <name>cyberlab</name>
+  <bridge name='virbr50' stp='on' delay='0'/>
+  <domain name='cyberlab'/>
+  <ip address='192.168.50.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.50.10' end='192.168.50.250'/>
+    </dhcp>
+  </ip>
+</network>

@@ -1,0 +1,242 @@
+version: "3.8"
+
+{% set app_name = app.name | default('guardian') %}
+{% set timezone = installer.timezone | default('UTC') %}
+{% set data_root = '/srv/home-stack' %}
+{% set network_name = app_name + '-net' %}
+
+services:
+  pihole:
+    image: pihole/pihole:latest
+    container_name: {{ app_name }}-pihole
+    restart: unless-stopped
+    hostname: {{ app_name }}-pihole
+    environment:
+      TZ: {{ timezone }}
+      WEBPASSWORD: {{ pihole_admin_password }}
+      DNSMASQ_LISTENING: all
+      FTLCONF_LOCAL_IPV4: {{ pihole_ip }}
+    ports:
+      - "{{ dns_port | default(53) }}:53/tcp"
+      - "{{ dns_port | default(53) }}:53/udp"
+      - "{{ pihole_web_port }}:80/tcp"
+    volumes:
+      - {{ data_root }}/pihole/etc-pihole:/etc/pihole
+      - {{ data_root }}/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
+    networks:
+      home_net:
+        ipv4_address: {{ pihole_ip }}
+
+  homepage:
+    image: ghcr.io/benphelps/homepage:latest
+    container_name: {{ app_name }}-homepage
+    restart: unless-stopped
+    environment:
+      TZ: {{ timezone }}
+    volumes:
+      - {{ data_root }}/homepage/config:/app/config:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "{{ homepage_port | default(3000) }}:3000"
+    networks:
+      - home_net
+
+{% if enable_plex %}
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: {{ app_name }}-plex
+    restart: unless-stopped
+    environment:
+      PUID: {{ media_puid | default(1000) }}
+      PGID: {{ media_pgid | default(1000) }}
+      VERSION: docker
+      TZ: {{ timezone }}
+    ports:
+      - "{{ plex_port }}:32400/tcp"
+      - "{{ plex_dlna_tcp_port | default(32469) }}:32469/tcp"
+      - "{{ plex_dlna_udp_port | default(1900) }}:1900/udp"
+    volumes:
+      - {{ data_root }}/plex/config:/config
+      - {{ media_library_path }}:/data/media:ro
+    networks:
+      - home_net
+{% endif %}
+
+  netdata:
+    image: netdata/netdata:stable
+    container_name: {{ app_name }}-netdata
+    restart: unless-stopped
+    hostname: {{ app_name }}
+    environment:
+      TZ: {{ timezone }}
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - apparmor:unconfined
+    ports:
+      - "{{ netdata_port }}:19999"
+    volumes:
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - {{ data_root }}/netdata/config:/etc/netdata
+      - {{ data_root }}/netdata/lib:/var/lib/netdata
+      - {{ data_root }}/netdata/cache:/var/cache/netdata
+    networks:
+      - home_net
+
+  nextcloud:
+    image: lscr.io/linuxserver/nextcloud:latest
+    container_name: {{ app_name }}-nextcloud
+    restart: unless-stopped
+    depends_on:
+      - nextcloud-db
+    environment:
+      PUID: {{ nextcloud_puid | default(1000) }}
+      PGID: {{ nextcloud_pgid | default(1000) }}
+      TZ: {{ timezone }}
+      {{ 'MYSQL_HOST' if nextcloud_db | default('mariadb') == 'mariadb' else 'POSTGRES_HOST' }}: nextcloud-db
+      {{ 'MYSQL_DATABASE' if nextcloud_db | default('mariadb') == 'mariadb' else 'POSTGRES_DB' }}: {{ nextcloud_db_name }}
+      {{ 'MYSQL_USER' if nextcloud_db | default('mariadb') == 'mariadb' else 'POSTGRES_USER' }}: {{ nextcloud_db_user }}
+      {{ 'MYSQL_PASSWORD' if nextcloud_db | default('mariadb') == 'mariadb' else 'POSTGRES_PASSWORD' }}: {{ nextcloud_db_password }}
+    ports:
+      - "{{ nextcloud_http_port }}:80"
+    volumes:
+      - {{ data_root }}/nextcloud/config:/config
+      - {{ data_root }}/nextcloud/data:/data
+    networks:
+      - home_net
+
+  nextcloud-db:
+    image: {{ 'mariadb:10.11' if nextcloud_db | default('mariadb') == 'mariadb' else 'postgres:15' }}
+    container_name: {{ app_name }}-nextcloud-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: {{ nextcloud_db_root_password if nextcloud_db | default('mariadb') == 'mariadb' else '' }}
+      {{ 'MYSQL_DATABASE' if nextcloud_db | default('mariadb') == 'mariadb' else 'POSTGRES_DB' }}: {{ nextcloud_db_name }}
+      {{ 'MYSQL_USER' if nextcloud_db | default('mariadb') == 'mariadb' else 'POSTGRES_USER' }}: {{ nextcloud_db_user }}
+      {{ 'MYSQL_PASSWORD' if nextcloud_db | default('mariadb') == 'mariadb' else 'POSTGRES_PASSWORD' }}: {{ nextcloud_db_password }}
+    volumes:
+      - {{ data_root }}/nextcloud/db:/var/lib/{{ 'mysql' if nextcloud_db | default('mariadb') == 'mariadb' else 'postgresql/data' }}
+    networks:
+      - home_net
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: {{ app_name }}-wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      PUID: {{ vpn_puid | default(1000) }}
+      PGID: {{ vpn_pgid | default(1000) }}
+      TZ: {{ timezone }}
+      SERVERURL: {{ wireguard_endpoint }}
+      SERVERPORT: {{ wireguard_port }}
+      PEERS: {{ wireguard_peers | default(5) }}
+      PEERDNS: {{ dns_ip | default('1.1.1.1') }}
+      ALLOWEDIPS: {{ wireguard_allowed_ips | default('0.0.0.0/0, ::/0') }}
+      INTERNAL_SUBNET: {{ wireguard_subnet }}
+    ports:
+      - "{{ wireguard_port }}:{{ wireguard_port }}/udp"
+    volumes:
+      - {{ data_root }}/wireguard/config:/config
+      - /lib/modules:/lib/modules:ro
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks:
+      home_net:
+        ipv4_address: {{ wireguard_gateway }}
+
+{% if enable_immich %}
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: {{ app_name }}-immich-server
+    restart: unless-stopped
+    depends_on:
+      - immich-db
+      - immich-redis
+    environment:
+      TZ: {{ timezone }}
+      DB_HOSTNAME: immich-db
+      DB_DATABASE_NAME: {{ immich_db_name }}
+      DB_USERNAME: {{ immich_db_user }}
+      DB_PASSWORD: {{ immich_db_password }}
+      REDIS_HOSTNAME: immich-redis
+      IMMICH_PORT: {{ immich_port }}
+      ENABLE_MAPBOX: {{ enable_mapbox | default(false) }}
+      MAPBOX_KEY: {{ mapbox_key | default('') }}
+    ports:
+      - "{{ immich_port }}:3001"
+    volumes:
+      - {{ data_root }}/immich/library:/usr/src/app/upload
+    networks:
+      - home_net
+
+  immich-microservices:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: {{ app_name }}-immich-microservices
+    restart: unless-stopped
+    depends_on:
+      - immich-db
+      - immich-redis
+    environment:
+      TZ: {{ timezone }}
+      DB_HOSTNAME: immich-db
+      DB_DATABASE_NAME: {{ immich_db_name }}
+      DB_USERNAME: {{ immich_db_user }}
+      DB_PASSWORD: {{ immich_db_password }}
+      REDIS_HOSTNAME: immich-redis
+    volumes:
+      - {{ data_root }}/immich/library:/usr/src/app/upload
+    networks:
+      - home_net
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    container_name: {{ app_name }}-immich-ml
+    restart: unless-stopped
+    depends_on:
+      - immich-server
+    environment:
+      TZ: {{ timezone }}
+      IMMICH_SERVER_URL: http://immich-server:3001
+    volumes:
+      - {{ data_root }}/immich/cache:/cache
+    networks:
+      - home_net
+
+  immich-redis:
+    image: redis:7
+    container_name: {{ app_name }}-immich-redis
+    restart: unless-stopped
+    command: redis-server --save 20 1 --loglevel warning
+    volumes:
+      - {{ data_root }}/immich/redis:/data
+    networks:
+      - home_net
+
+  immich-db:
+    image: postgres:15
+    container_name: {{ app_name }}-immich-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: {{ immich_db_name }}
+      POSTGRES_USER: {{ immich_db_user }}
+      POSTGRES_PASSWORD: {{ immich_db_password }}
+    volumes:
+      - {{ data_root }}/immich/db:/var/lib/postgresql/data
+    networks:
+      - home_net
+{% endif %}
+
+networks:
+  home_net:
+    name: {{ network_name }}
+    driver: bridge
+    ipam:
+      config:
+        - subnet: {{ home_subnet }}
