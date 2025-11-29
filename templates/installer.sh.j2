@@ -249,7 +249,31 @@ EOF_CRON
 }
 
 configure_kvm() {
-  log "KVM/libvirt steps are skipped on Raspberry Pi/ARM targets"
+  if [[ "${ENABLE_KVM}" != "true" ]]; then
+    log "KVM/libvirt disabled; skipping virtualization setup"
+    return
+  fi
+  log "Installing KVM/libvirt tooling"
+  ensure_packages "${KVM_PACKAGES[@]}"
+  run_cmd "systemctl enable --now libvirtd"
+
+  if [[ -f "${ASSET_KVM_NET}" ]]; then
+    log "Defining isolated network ${ISOLATED_NET_NAME} (${ISOLATED_NET_BRIDGE})"
+    virsh net-define "${ASSET_KVM_NET}" || true
+    virsh net-autostart "${ISOLATED_NET_NAME}" || true
+    virsh net-start "${ISOLATED_NET_NAME}" || true
+  fi
+
+  if [[ -f "${ASSET_KALI}" ]]; then
+    install -m 755 "${ASSET_KALI}" /usr/local/bin/create-kali-vm.sh
+    sed -i "s/^DEFAULT_RAM_MB=.*/DEFAULT_RAM_MB=${KALI_RAM_MB}/" /usr/local/bin/create-kali-vm.sh || true
+    sed -i "s/^DEFAULT_VCPUS=.*/DEFAULT_VCPUS=${KALI_VCPUS}/" /usr/local/bin/create-kali-vm.sh || true
+  fi
+  if [[ -f "${ASSET_PFSENSE}" ]]; then
+    install -m 755 "${ASSET_PFSENSE}" /usr/local/bin/create-pfsense-vm.sh
+    sed -i "s/^DEFAULT_RAM_MB=.*/DEFAULT_RAM_MB=${PFSENSE_RAM_MB}/" /usr/local/bin/create-pfsense-vm.sh || true
+    sed -i "s/^DEFAULT_VCPUS=.*/DEFAULT_VCPUS=${PFSENSE_VCPUS}/" /usr/local/bin/create-pfsense-vm.sh || true
+  fi
 }
 
 apply_updates_and_upgrades() {
@@ -270,7 +294,7 @@ Locale:     ${LOCALE}
 SSH Port:   ${SSH_PORT}
 Firewall:   ${FIREWALL_ENABLED} (policy: ${FIREWALL_DEFAULT})
 Docker:     ${DOCKER_ENABLED}
-KVM:        disabled (skipped on Raspberry Pi/ARM)
+KVM:        ${ENABLE_KVM} (network: ${ISOLATED_NET_NAME}/${ISOLATED_NET_BRIDGE})
 Homepage:   ${HOMEPAGE_ENABLED}
 Backups:    /usr/local/bin/guardian-backup.sh (cron 03:00)
 Security:   /usr/local/bin/guardian-security-scan.sh (cron Sun 02:00)

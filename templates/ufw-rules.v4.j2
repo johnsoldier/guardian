@@ -1,38 +1,23 @@
 # Managed by Guardian installer
 # Generated from templates/ufw-rules.v4.j2
-# IPv4 UFW ruleset
+# Adjusted using installer.firewall settings from config/defaults.yaml
 
 *filter
-:INPUT DROP [0:0]
+:INPUT {{ "DROP" if installer.firewall.default_policy|lower == "deny" else "ACCEPT" }} [0:0]
 :FORWARD DROP [0:0]
 :OUTPUT ACCEPT [0:0]
 
-# Allow established sessions and loopback
+# Allow established sessions and local traffic
 -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 -A INPUT -i lo -j ACCEPT
 
-# Allow Docker bridge traffic
--A INPUT -i docker0 -j ACCEPT
--A OUTPUT -o docker0 -j ACCEPT
--A FORWARD -i docker0 -o docker0 -j ACCEPT
-
-# Permit management and web services from trusted LAN and VPN
-{% set local_sources = [trusted_lan, wg_vpn_subnet] %}
-{% set service_ports = [nextcloud_http_port, pihole_web_port, netdata_port] %}
-{% if enable_plex %}{% set service_ports = service_ports + [plex_port] %}{% endif %}
-{% if enable_immich %}{% set service_ports = service_ports + [immich_port] %}{% endif %}
-{% for src in local_sources %}
--A INPUT -p tcp --dport {{ ssh_port }} -s {{ src }} -j ACCEPT
--A INPUT -p tcp --dport 80 -s {{ src }} -j ACCEPT
-{% for port in service_ports %}
--A INPUT -p tcp --dport {{ port }} -s {{ src }} -j ACCEPT
-{% endfor %}
-# DNS for local networks and VPN
--A INPUT -p tcp --dport 53 -s {{ src }} -j ACCEPT
--A INPUT -p udp --dport 53 -s {{ src }} -j ACCEPT
+# Permit configured service ports
+{% for port in installer.firewall.allow | default([]) %}
+-A INPUT -p tcp --dport {{ port }} -j ACCEPT
+-A INPUT -p udp --dport {{ port }} -j ACCEPT
 {% endfor %}
 
-# Explicitly drop any other inbound traffic (WAN)
--A INPUT -j DROP
+# Final policy
+-A INPUT -j {{ "DROP" if installer.firewall.default_policy|lower == "deny" else "ACCEPT" }}
 
 COMMIT
